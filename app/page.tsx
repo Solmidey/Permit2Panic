@@ -1,5 +1,5 @@
-import { HomeShell } from "@/components/home-shell";
+import PageClient from "./page-client";
 
 export default function Page() {
-  return <HomeShell />;
+  return <PageClient />;
 }

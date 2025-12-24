@@ -41,7 +41,18 @@ export function HomeShell() {
   const fetchReceipts = async () => {
     if (!owner) return;
     const res = await fetch(`/api/receipts?owner=${owner}&chainId=${chainId}`);
-    const data = await res.json();
+    const text = await res.text();
+    let data: any = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (e) {
+      console.error("Receipts API returned non-JSON:", text);
+      return;
+    }
+    if (!res.ok) {
+      console.error("Receipts API error:", data?.error ?? text);
+      return;
+    }
     if (!data.error) setReceipts(data.receipts || []);
   };
 
