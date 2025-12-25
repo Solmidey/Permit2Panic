@@ -2,6 +2,7 @@ import { getRpcUrl } from "@/lib/chains";
 import { PERMIT2_ADDRESS } from "@/lib/permit2/constants";
 import { createPublicClient, formatUnits, http, parseUnits } from "viem";
 import { base, mainnet } from "viem/chains";
+import type { Address } from "viem";
 
 export const clients = {
   [mainnet.id]: createPublicClient({
@@ -19,7 +20,7 @@ export const clients = {
 };
 
 export function getClient(chainId: number) {
-  return clients[chainId] || clients[mainnet.id];
+  return (clients as Record<number, typeof clients[keyof typeof clients]>)[chainId] || clients[mainnet.id];
 }
 
 export function formatAllowanceAmount(amount: bigint, decimals: number) {
@@ -31,5 +32,5 @@ export function parseAllowanceAmount(amount: string, decimals: number) {
 }
 
 export function permit2AddressForChain(_chainId: number) {
-  return PERMIT2_ADDRESS as const;
+  return PERMIT2_ADDRESS as Address;
 }
