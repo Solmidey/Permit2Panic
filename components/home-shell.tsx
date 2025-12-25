@@ -1,115 +1,177 @@
 "use client";
-import type { Address } from "viem";
 
-import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, CheckCircle2, Loader2, RefreshCcw, Sparkles } from "lucide-react";
-
-import { AllowanceList } from "@/components/allowance-list";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { SafetyBanner } from "@/components/safety-banner";
-import { ChainSwitcher } from "@/components/chain-switcher";
-import { PanicButton } from "@/components/panic-button";
-import { ReceiptCard } from "@/components/receipt-card";
-import { WalletConnect } from "@/components/wallet-connect";
-import { DEFAULT_CHAIN_ID } from "@/lib/chains";
-import type { Allowance, TokenSpenderPair, Receipt } from "@/lib/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { getAddress, isAddress, type Address } from "viem";
+import { useAccount } from "wagmi";
+import { Loader2, RefreshCcw, Scan } from "lucide-react";
 import { toast } from "sonner";
 
+import { AllowanceList } from "@/components/allowance-list";
+import { ChainSwitcher } from "@/components/chain-switcher";
+import { ReceiptCard } from "@/components/receipt-card";
+import { SafetyBanner } from "@/components/safety-banner";
+import { WalletConnect } from "@/components/wallet-connect";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+
+import { DEFAULT_CHAIN_ID } from "@/lib/chains";
+import type { Allowance, Receipt, TokenSpenderPair } from "@/lib/types";
+
+const HYGIENE_XP_KEY = "hygiene_xp";
+const LAST_OWNER_KEY = "permit2panic:lastOwner";
+const LEGACY_LAST_OWNER_KEY = "last_owner";
+
+function normalizeAddress(value: string): Address | null {
+  const v = (value ?? "").trim();
+  if (!v) return null;
+  if (!isAddress(v)) return null;
+  return getAddress(v) as Address;
+}
+
+function shortAddr(addr: Address) {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
 export function HomeShell() {
+  const { address: connectedAddress, isConnected } = useAccount();
+
   const [chainId, setChainId] = useState<number>(DEFAULT_CHAIN_ID);
-  const [owner, setOwner] = useState<string>("");
+
+  // owner input + toggle (default ON: use connected wallet)
+  const [ownerInput, setOwnerInput] = useState<string>("");
+  const [useConnectedOwner, setUseConnectedOwner] = useState<boolean>(true);
+
+  const owner = useMemo(() => normalizeAddress(ownerInput), [ownerInput]);
+
   const [allowances, setAllowances] = useState<Allowance[]>([]);
   const [loading, setLoading] = useState(false);
   const [deepScan, setDeepScan] = useState(false);
+
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [hygieneXp, setHygieneXp] = useState(0);
+
   const [revokedCount, setRevokedCount] = useState(0);
   const [limitedCount, setLimitedCount] = useState(0);
-  const [panickedCount, setPanickedCount] = useState(0);
+  const [panickedCount] = useState(0); // keep if/when you wire a panic feature
 
+  // init: hygiene xp + last owner
   useEffect(() => {
-    const xp = Number(localStorage.getItem("hygiene_xp") || "0");
-    setHygieneXp(xp);
+    const xp = Number(localStorage.getItem(HYGIENE_XP_KEY) || "0");
+    setHygieneXp(Number.isFinite(xp) ? xp : 0);
+
+    // If user previously scanned a manual address, restore it (toggle OFF).
+    const saved =
+      localStorage.getItem(LAST_OWNER_KEY) ||
+      localStorage.getItem(LEGACY_LAST_OWNER_KEY) ||
+      "";
+    if (saved && normalizeAddress(saved)) {
+      setOwnerInput(saved);
+      setUseConnectedOwner(false);
+    }
   }, []);
+
+  // keep owner synced to connected wallet when toggle is ON
+  useEffect(() => {
+    if (!isConnected || !connectedAddress) return;
+    if (!useConnectedOwner) return;
+
+    setOwnerInput(connectedAddress);
+    localStorage.setItem(LAST_OWNER_KEY, connectedAddress);
+  }, [isConnected, connectedAddress, useConnectedOwner]);
+
+  // persist whatever is currently in the input
+  useEffect(() => {
+    if (ownerInput) localStorage.setItem(LAST_OWNER_KEY, ownerInput);
+  }, [ownerInput]);
 
   const activePairs = useMemo<TokenSpenderPair[]>(
     () => allowances.map((a) => ({ token: a.token as Address, spender: a.spender as Address })),
     [allowances]
   );
 
-  const fetchReceipts = async () => {
-    if (!owner) return;
-    const res = await fetch(`/api/receipts?owner=${owner}&chainId=${chainId}`);
-    const text = await res.text();
-    let data: any = {};
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch (e) {
-      console.error("Receipts API returned non-JSON:", text);
-      return;
-    }
-    if (!res.ok) {
-      console.error("Receipts API error:", data?.error ?? text);
-      return;
-    }
-    if (!data.error) setReceipts(data.receipts || []);
-  };
+  const fetchReceipts = useCallback(
+    async (overrideOwner?: Address) => {
+      const target = overrideOwner ?? owner;
+      if (!target) return;
+
+      try {
+        const res = await fetch(`/api/receipts?owner=${target}&chainId=${chainId}`);
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : {};
+
+        if (!res.ok) throw new Error(data?.error ?? "Failed to load receipts");
+        setReceipts(Array.isArray(data.receipts) ? data.receipts : []);
+      } catch (err) {
+        console.error(err);
+      }
+    },
+    [owner, chainId]
+  );
 
   useEffect(() => {
     fetchReceipts();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner, chainId]);
+  }, [fetchReceipts]);
 
-  const scan = async () => {
-    if (!owner) {
-      toast.error("Enter an address to scan");
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await fetch("/api/scan", {
-        method: "POST",
-        body: JSON.stringify({ owner, chainId, deep: deepScan }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setAllowances(data.allowances || []);
-      toast.success("Scan complete");
-      const newXp = hygieneXp + 1;
-      setHygieneXp(newXp);
-      localStorage.setItem("hygiene_xp", String(newXp));
-      await fetchReceipts();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to scan");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const scan = useCallback(
+    async (overrideOwner?: Address) => {
+      const target = overrideOwner ?? owner;
 
-  useEffect(() => {
-    const savedOwner = localStorage.getItem("last_owner");
-    if (savedOwner) setOwner(savedOwner);
-  }, []);
+      if (!target) {
+        toast.error(isConnected ? "Connect a wallet or enter an address to scan." : "Enter an address to scan.");
+        return;
+      }
 
-  useEffect(() => {
-    if (owner) localStorage.setItem("last_owner", owner);
-  }, [owner]);
+      setLoading(true);
+      try {
+        const res = await fetch("/api/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ owner: target, chainId, deep: deepScan }),
+        });
 
-  const handleAllowanceAction = (type: "revoke" | "limit") => {
-    if (type === "revoke") setRevokedCount((v) => v + 1);
-    if (type === "limit") setLimitedCount((v) => v + 1);
-  };
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : {};
 
-  const saveReceipt = async () => {
+        if (!res.ok) throw new Error(data?.error ?? "Scan failed");
+        if (data.error) throw new Error(data.error);
+
+        setAllowances(Array.isArray(data.allowances) ? data.allowances : []);
+        toast.success("Scan complete");
+
+        setHygieneXp((prev) => {
+          const next = prev + 1;
+          localStorage.setItem(HYGIENE_XP_KEY, String(next));
+          return next;
+        });
+
+        await fetchReceipts(target);
+      } catch (err: any) {
+        toast.error(err?.message ?? "Failed to scan");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [owner, chainId, deepScan, isConnected, fetchReceipts]
+  );
+
+  const saveReceipt = useCallback(async () => {
     if (!owner) {
       toast.error("Connect or enter a wallet address first.");
       return;
     }
+
+    const totalActions = revokedCount + limitedCount + panickedCount;
+    if (totalActions === 0) {
+      toast.error("No actions yet. Revoke/limit something first.");
+      return;
+    }
+
     try {
-      await fetch("/api/receipts", {
+      const res = await fetch("/api/receipts", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           owner,
           chainId,
@@ -119,120 +181,172 @@ export function HomeShell() {
           summary: `Revoked ${revokedCount} approvals, limited ${limitedCount}, panic batches ${panickedCount}.`,
         }),
       });
+
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : {};
+      if (!res.ok) throw new Error(data?.error ?? "Failed to save receipt");
+
       toast.success("Safety Receipt saved");
-      fetchReceipts();
       setRevokedCount(0);
       setLimitedCount(0);
-      setPanickedCount(0);
+      await fetchReceipts(owner);
     } catch (err: any) {
-      toast.error(err.message || "Failed to save receipt");
+      toast.error(err?.message ?? "Failed to save receipt");
     }
+  }, [owner, chainId, revokedCount, limitedCount, panickedCount, fetchReceipts]);
+
+  const handleAllowanceAction = useCallback((type: "revoke" | "limit") => {
+    if (type === "revoke") setRevokedCount((v) => v + 1);
+    if (type === "limit") setLimitedCount((v) => v + 1);
+  }, []);
+
+  const scanConnected = () => {
+    const addr = normalizeAddress(connectedAddress ?? "");
+    if (!addr) {
+      toast.error("Connect a wallet first.");
+      return;
+    }
+    setUseConnectedOwner(true);
+    setOwnerInput(addr);
+    scan(addr);
   };
 
+  const invalidOwner = ownerInput.trim().length > 0 && !owner;
+
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-10">
-      <div className="flex flex-col gap-4 rounded-3xl border border-slate-800 bg-slate-950/60 p-6 shadow-lg">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-200">
-              <Sparkles className="h-4 w-4" /> MiniKit ready
-            </p>
-            <h1 className="mt-3 text-3xl font-bold text-white">Permit2 Panic Button</h1>
-            <p className="text-sm text-slate-300">
-              Scan, flag, and revoke risky allowances on Ethereum & Base. Keep your wallet hygiene streak alive.
-            </p>
-          </div>
-          <WalletConnect />
+    <div className="mx-auto max-w-5xl px-4 py-10">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-4xl font-semibold text-white">Permit2 Panic Button</h1>
+          <p className="mt-2 text-slate-300">
+            Scan, flag, and revoke risky allowances on Ethereum &amp; Base. Keep your wallet hygiene streak alive.
+          </p>
         </div>
-        <SafetyBanner />
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="space-y-2">
-            <label className="text-sm text-slate-300" htmlFor="owner">Owner address</label>
-            <Input
-              id="owner"
-              placeholder="0x..."
-              value={owner}
-              onChange={(e) => setOwner(e.target.value)}
-              className="bg-slate-900/50"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm text-slate-300">Chain</label>
-            <ChainSwitcher chainId={chainId} onChange={(id) => setChainId(id)} />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm text-slate-300">Deep scan</label>
-            <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-              <p className="text-xs text-slate-400">Include historical events (may take longer).</p>
-              <Button variant="outline" size="sm" onClick={() => setDeepScan((v) => !v)}>
-                {deepScan ? "On" : "Off"}
-              </Button>
+        <WalletConnect />
+      </div>
+
+      <Card className="mt-6 border-slate-800 bg-slate-950/40">
+        <CardHeader>
+          <CardTitle className="text-white">Scan</CardTitle>
+        </CardHeader>
+
+        <CardContent className="space-y-6">
+          <SafetyBanner />
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-sm text-slate-300">Owner address</label>
+              <Input
+                value={ownerInput}
+                onChange={(e) => setOwnerInput(e.target.value)}
+                placeholder="0x..."
+                disabled={useConnectedOwner && isConnected}
+              />
+              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={useConnectedOwner}
+                    onChange={(e) => setUseConnectedOwner(e.target.checked)}
+                  />
+                  Use connected wallet
+                </label>
+
+                {isConnected && connectedAddress ? (
+                  <button
+                    type="button"
+                    className="underline underline-offset-4 hover:text-slate-200"
+                    onClick={scanConnected}
+                  >
+                    Scan {shortAddr(getAddress(connectedAddress) as Address)}
+                  </button>
+                ) : null}
+
+                {invalidOwner ? <span className="text-red-400">Invalid address</span> : null}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm text-slate-300">Chain</label>
+              <ChainSwitcher chainId={chainId} onChange={(id) => setChainId(id)} />
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm text-slate-300">Deep scan</label>
+              <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/30 px-4 py-3">
+                <span className="text-sm text-slate-300">Include historical events (may take longer).</span>
+                <button
+                  type="button"
+                  className="text-sm text-slate-200 underline underline-offset-4"
+                  onClick={() => setDeepScan((v) => !v)}
+                >
+                  {deepScan ? "On" : "Off"}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={scan} className="gap-2" disabled={loading}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-          {loading ? "Scanning" : "Scan allowances"}
-        </Button>
-        <Button variant="secondary" className="gap-2" onClick={fetchReceipts}>
-          <ArrowRight className="h-4 w-4" /> Refresh receipts
-        </Button>
-        <div className="rounded-full bg-slate-900/60 px-3 py-1 text-xs text-slate-300">Hygiene XP: {hygieneXp}</div>
-        <PanicButton
-          pairs={activePairs}
-          onPrepared={() => setPanickedCount((v) => v + 1)}
-        />
-      </div>
-      </div>
 
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-white">Allowances</h2>
-          <p className="text-xs text-slate-400">Active pairs: {allowances.length}</p>
-        </div>
-        {loading ? (
-          <Card className="border-slate-800 bg-slate-950/70">
-            <CardHeader>
-              <CardTitle>Scanning...</CardTitle>
-              <CardDescription>Pulling Permit2 logs and decoding events.</CardDescription>
-            </CardHeader>
-            <CardContent className="flex items-center gap-2 text-slate-300">
-              <Loader2 className="h-4 w-4 animate-spin" /> Building token/spender pairs and reading allowances.
-            </CardContent>
-          </Card>
-        ) : (
-          <AllowanceList allowances={allowances} onRescan={scan} onAction={handleAllowanceAction} />
-        )}
-      </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={() => scan()} disabled={loading}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Scan className="mr-2 h-4 w-4" />}
+              Scan allowances
+            </Button>
 
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-white">Safety Receipts</h2>
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <p>Shareable summary after cleanups</p>
-            <Button size="sm" variant="outline" onClick={saveReceipt}>
+            <Button
+              variant="secondary"
+              onClick={() => fetchReceipts()}
+              disabled={!owner}
+              title={!owner ? "Enter a valid address first" : "Refresh receipts"}
+            >
+              <RefreshCcw className="mr-2 h-4 w-4" />
+              Refresh receipts
+            </Button>
+
+            <div className="rounded-full border border-slate-800 bg-slate-950/40 px-3 py-1 text-sm text-slate-200">
+              Hygiene XP: {hygieneXp}
+            </div>
+
+            <Button
+              variant="outline"
+              onClick={saveReceipt}
+              disabled={!owner || revokedCount + limitedCount + panickedCount === 0}
+              title={!owner ? "Enter a valid address first" : "Save a receipt for your actions"}
+            >
               Save receipt
             </Button>
           </div>
+
+          <AllowanceList allowances={allowances} onRescan={() => scan()} onAction={handleAllowanceAction} />
+
+          {/* If you wire a panic/lockdown feature later, activePairs is ready: */}
+          {/* <PanicButton pairs={activePairs} chainId={chainId} owner={owner} onPanicked={() => setPanickedCount(v => v+1)} /> */}
+          <div className="text-xs text-slate-500">
+            Active pairs ready for panic/lockdown: {activePairs.length}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="mt-8 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-semibold text-white">Receipts</h2>
         </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {receipts.map((receipt) => (
-            <ReceiptCard key={receipt.id} receipt={receipt} />
-          ))}
-          {receipts.length === 0 && (
-            <Card className="border-slate-800 bg-slate-950/70">
-              <CardHeader>
-                <CardTitle>No receipts yet</CardTitle>
-                <CardDescription>Complete a scan and revoke/limit approvals to generate a shareable receipt.</CardDescription>
-              </CardHeader>
-              <CardContent className="flex items-center gap-2 text-sm text-slate-200">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Earn weekly streaks by keeping your wallet clean.
-              </CardContent>
-            </Card>
-          )}
-        </div>
+
+        {receipts.length ? (
+          <div className="space-y-3">
+            {receipts.map((r, idx) => (
+              <ReceiptCard key={(r as any).id ?? idx} receipt={r} />
+            ))}
+          </div>
+        ) : (
+          <Card className="border-slate-800 bg-slate-950/40">
+            <CardContent className="py-8 text-center text-slate-300">
+              No receipts found. Run a scan and save a receipt.
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
 }
+
+export default HomeShell;
