@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 
 import { DEFAULT_CHAIN_ID } from "@/lib/chains";
 import type { Allowance, Receipt, TokenSpenderPair } from "@/lib/types";
+import { loadLocalReceipts, mergeReceipts, prependLocalReceipt } from "@/lib/receipts-local";
 
 const HYGIENE_XP_KEY = "hygiene_xp";
 const LAST_OWNER_KEY = "permit2panic:lastOwner";
@@ -34,8 +35,16 @@ function shortAddr(addr: Address) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
+function makeId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 export function HomeShell() {
   const { address: connectedAddress, isConnected } = useAccount();
+
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const [chainId, setChainId] = useState<number>(DEFAULT_CHAIN_ID);
 
@@ -96,14 +105,25 @@ export function HomeShell() {
       const target = overrideOwner ?? owner;
       if (!target) return;
 
+      // 1) show local receipts immediately (button always “works”)
+      const local = loadLocalReceipts(target, chainId);
+      setReceipts(local);
+
+      // 2) best-effort: fetch server receipts and merge
       try {
-        const res = await fetch(`/api/receipts?owner=${target}&chainId=${chainId}`);
+        const res = await fetch(`/api/receipts?owner=${target}&chainId=${chainId}`, {
+          cache: "no-store",
+        });
+
         const text = await res.text();
         const data = text ? JSON.parse(text) : {};
 
         if (!res.ok) throw new Error(data?.error ?? "Failed to load receipts");
-        setReceipts(Array.isArray(data.receipts) ? data.receipts : []);
+        const remote = Array.isArray(data.receipts) ? (data.receipts as Receipt[]) : [];
+
+        setReceipts(mergeReceipts(local, remote));
       } catch (err) {
+        // keep local; just log
         console.error(err);
       }
     },
@@ -168,6 +188,30 @@ export function HomeShell() {
       return;
     }
 
+    const createdAt = Date.now();
+    const receipt: Receipt = {
+      ...( {
+        id: makeId(),
+        owner,
+        chainId,
+        revoked: revokedCount,
+        limited: limitedCount,
+        panicked: panickedCount,
+        summary: `Revoked ${revokedCount} approvals, limited ${limitedCount}, panic batches ${panickedCount}.`,
+        createdAt,
+      } as any ),
+    };
+
+    // ✅ Save locally first — always works
+    const nextLocal = prependLocalReceipt(owner, chainId, receipt);
+    setReceipts(nextLocal);
+    toast.success("Safety Receipt saved");
+
+    // Reset counters immediately (UX feels instant)
+    setRevokedCount(0);
+    setLimitedCount(0);
+
+    // Best-effort sync to server (optional)
     try {
       const res = await fetch("/api/receipts", {
         method: "POST",
@@ -175,23 +219,25 @@ export function HomeShell() {
         body: JSON.stringify({
           owner,
           chainId,
-          revoked: revokedCount,
-          limited: limitedCount,
-          panicked: panickedCount,
-          summary: `Revoked ${revokedCount} approvals, limited ${limitedCount}, panic batches ${panickedCount}.`,
+          revoked: (receipt as any).revoked ?? revokedCount,
+          limited: (receipt as any).limited ?? limitedCount,
+          panicked: (receipt as any).panicked ?? panickedCount,
+          summary: (receipt as any).summary,
+          createdAt,
+          id: (receipt as any).id,
         }),
       });
 
       const text = await res.text();
       const data = text ? JSON.parse(text) : {};
-      if (!res.ok) throw new Error(data?.error ?? "Failed to save receipt");
+      if (!res.ok) throw new Error(data?.error ?? "Failed to sync receipt");
 
-      toast.success("Safety Receipt saved");
-      setRevokedCount(0);
-      setLimitedCount(0);
+      // re-merge so server + local stay consistent
       await fetchReceipts(owner);
-    } catch (err: any) {
-      toast.error(err?.message ?? "Failed to save receipt");
+    } catch (err) {
+      // Not fatal; receipt is already saved locally
+      console.error(err);
+      toast.message("Saved locally. Server sync failed (you’re still good).");
     }
   }, [owner, chainId, revokedCount, limitedCount, panickedCount, fetchReceipts]);
 
@@ -268,7 +314,13 @@ export function HomeShell() {
 
             <div className="space-y-2">
               <label className="text-sm text-slate-300">Chain</label>
-              <ChainSwitcher chainId={chainId} onChange={(id) => setChainId(id)} />
+
+              {/* ✅ mount-guard fixes Radix hydration mismatch */}
+              {mounted ? (
+                <ChainSwitcher chainId={chainId} onChange={(id) => setChainId(id)} />
+              ) : (
+                <div className="h-10 w-[180px] rounded-xl border border-slate-800 bg-slate-950/30" />
+              )}
             </div>
 
             <div className="space-y-2 md:col-span-2">
@@ -318,11 +370,7 @@ export function HomeShell() {
 
           <AllowanceList allowances={allowances} onRescan={() => scan()} onAction={handleAllowanceAction} />
 
-          {/* If you wire a panic/lockdown feature later, activePairs is ready: */}
-          {/* <PanicButton pairs={activePairs} chainId={chainId} owner={owner} onPanicked={() => setPanickedCount(v => v+1)} /> */}
-          <div className="text-xs text-slate-500">
-            Active pairs ready for panic/lockdown: {activePairs.length}
-          </div>
+          <div className="text-xs text-slate-500">Active pairs ready for panic/lockdown: {activePairs.length}</div>
         </CardContent>
       </Card>
 
