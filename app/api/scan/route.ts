@@ -5,9 +5,9 @@ import { base } from "viem/chains";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
 
-// Permit2 event topic0s seen in your logs (Approval / Permit / Lockdown)
+// topic0s seen in your logs
 const TOPIC0S = [
   "0xda9fa7c1b00402c17d0161b249b1ab8bbec047c5a52207b9c112deffd817036b",
   "0xc6a377bfc4eb120024a8ac08eef205be16b817020812c73223e81d1bdb9708ec",
@@ -49,47 +49,46 @@ function client() {
   const urls = rpcUrls();
   return createPublicClient({
     chain: base,
-    transport: fallback(
-      urls.map((u) => http(u, { timeout: 20_000 })),
-      { rank: true }
-    ),
+    transport: fallback(urls.map((u) => http(u, { timeout: 20_000 })), { rank: true }),
   });
 }
 
+const toHexBlock = (b: bigint) => `0x${b.toString(16)}` as `0x${string}`;
+
 function topicToAddress(topic: `0x${string}`) {
-  // last 20 bytes
   return (`0x${topic.slice(26)}`) as `0x${string}`;
 }
 
-async function getLogsChunked(opts: {
-  fromBlock: bigint;
-  toBlock: bigint;
-  ownerTopic: `0x${string}`;
-}) {
+async function getLogsChunked(opts: { fromBlock: bigint; toBlock: bigint; ownerTopic: `0x${string}` }) {
   const c = client();
   const logs: any[] = [];
 
   let from = opts.fromBlock;
-  let step = 50_000n; // chunk size
-  const minStep = 5_000n;
+  let step = 50000n;
+  const minStep = 5000n;
 
   while (from <= opts.toBlock) {
     let to = from + step;
     if (to > opts.toBlock) to = opts.toBlock;
 
     try {
-      const chunk = await c.getLogs({
-        address: PERMIT2,
-        fromBlock: from,
-        toBlock: to,
-        topics: [Array.from(TOPIC0S), opts.ownerTopic],
+      // Use raw RPC to allow "topics" without TS type errors
+      const chunk = await c.request({
+        method: "eth_getLogs",
+        params: [
+          {
+            address: PERMIT2,
+            fromBlock: toHexBlock(from),
+            toBlock: toHexBlock(to),
+            topics: [Array.from(TOPIC0S), opts.ownerTopic],
+          },
+        ],
       });
-      logs.push(...chunk);
+
+      logs.push(...(chunk as any[]));
       from = to + 1n;
-      // if stable, gradually increase chunk
-      if (step < 100_000n) step += 10_000n;
+      if (step < 100000n) step += 10000n;
     } catch (e: any) {
-      // shrink + retry
       if (step > minStep) {
         step = step / 2n;
         continue;
@@ -103,15 +102,11 @@ async function getLogsChunked(opts: {
 
 async function safeTokenMeta(token: `0x${string}`) {
   const c = client();
-  try {
-    const [symbol, decimals] = await Promise.all([
-      c.readContract({ address: token, abi: erc20Abi, functionName: "symbol" }).catch(() => "TOKEN"),
-      c.readContract({ address: token, abi: erc20Abi, functionName: "decimals" }).catch(() => 18),
-    ]);
-    return { symbol, decimals };
-  } catch {
-    return { symbol: "TOKEN", decimals: 18 };
-  }
+  const [symbol, decimals] = await Promise.all([
+    c.readContract({ address: token, abi: erc20Abi, functionName: "symbol" }).catch(() => "TOKEN"),
+    c.readContract({ address: token, abi: erc20Abi, functionName: "decimals" }).catch(() => 18),
+  ]);
+  return { symbol, decimals };
 }
 
 export async function POST(req: Request) {
@@ -130,24 +125,22 @@ export async function POST(req: Request) {
     const c = client();
     const latest = await c.getBlockNumber();
 
-    // keep your existing behavior (~1.3m blocks lookback), but chunked
-    const lookback = BigInt(body.lookbackBlocks ?? 1_296_000);
+    const lookback = BigInt(body.lookbackBlocks ?? 1296000);
     const fromBlock = latest > lookback ? latest - lookback : 0n;
 
     const ownerTopic = (`0x000000000000000000000000${owner.slice(2)}`) as `0x${string}`;
     const logs = await getLogsChunked({ fromBlock, toBlock: latest, ownerTopic });
 
-    // Extract unique (token, spender) pairs from topics
     const pairs = new Map<string, { token: `0x${string}`; spender: `0x${string}` }>();
     for (const l of logs) {
-      const t = l.topics as `0x${string}`[];
+      const t = (l as any).topics as `0x${string}`[];
       if (!t?.[2] || !t?.[3]) continue;
-      const token = topicToAddress(t[2]) as `0x${string}`;
-      const spender = topicToAddress(t[3]) as `0x${string}`;
+      const token = topicToAddress(t[2]);
+      const spender = topicToAddress(t[3]);
       pairs.set(`${token}:${spender}`, { token, spender });
     }
 
-    const out = [];
+    const out: any[] = [];
     for (const { token, spender } of pairs.values()) {
       const [allowance, meta] = await Promise.all([
         c.readContract({
@@ -162,7 +155,6 @@ export async function POST(req: Request) {
       const amount = allowance[0] as bigint;
       const expiration = allowance[1] as number;
 
-      // Only return “active-ish” allowances
       if (amount > 0n) {
         out.push({
           token,
@@ -180,10 +172,6 @@ export async function POST(req: Request) {
       { status: 200 }
     );
   } catch (e: any) {
-    // Always return JSON so the UI never crashes parsing
-    return NextResponse.json(
-      { allowances: [], error: e?.shortMessage || e?.message || "scan_failed" },
-      { status: 200 }
-    );
+    return NextResponse.json({ allowances: [], error: e?.message || "scan_failed" }, { status: 200 });
   }
 }

@@ -1,5 +1,4 @@
-import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const allowances = sqliteTable(
   "allowances",
@@ -14,8 +13,13 @@ export const allowances = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
     lastSeen: integer("last_seen").notNull(),
   },
-  (table) => ({
-    uniqueAllowance: sql`unique(${table.chainId}, ${table.owner}, ${table.token}, ${table.spender})`,
+  (t) => ({
+    uniqueAllowance: uniqueIndex("allowances_unique").on(
+      t.chainId,
+      t.owner,
+      t.token,
+      t.spender
+    ),
   })
 );
 

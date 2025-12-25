@@ -9,7 +9,7 @@ export function buildRevokeTx(token: Address, spender: Address) {
     data: encodeFunctionData({
       abi: [approveAbiItem],
       functionName: "approve",
-      args: [token, spender, 0n, 0n],
+      args: [token, spender, 0n, 0],
     }),
     value: 0n,
   };
@@ -21,7 +21,7 @@ export function buildLimitTx(token: Address, spender: Address, amount: bigint, e
     data: encodeFunctionData({
       abi: [approveAbiItem],
       functionName: "approve",
-      args: [token, spender, amount, expiration],
+      args: [token, spender, amount, Number(expiration)],
     }),
     value: 0n,
   };

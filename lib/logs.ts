@@ -26,7 +26,7 @@ export function decodePermit2Log(log: Log): Permit2Log | null {
       const decoded = decodeEventLog({
         abi: [abiEvent],
         data: log.data as Hex,
-        topics: log.topics as Hex[],
+        topics: (log.topics as Hex[]) as unknown as [Hex, ...Hex[]],
       });
 
       if (decoded.eventName === "Approval") {

@@ -1,4 +1,5 @@
 "use client";
+import type { Address } from "viem";
 
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, CheckCircle2, Loader2, RefreshCcw, Sparkles } from "lucide-react";
@@ -17,7 +18,7 @@ import type { Allowance, TokenSpenderPair, Receipt } from "@/lib/types";
 import { toast } from "sonner";
 
 export function HomeShell() {
-  const [chainId, setChainId] = useState(DEFAULT_CHAIN_ID);
+  const [chainId, setChainId] = useState<number>(DEFAULT_CHAIN_ID);
   const [owner, setOwner] = useState<string>("");
   const [allowances, setAllowances] = useState<Allowance[]>([]);
   const [loading, setLoading] = useState(false);
@@ -34,7 +35,7 @@ export function HomeShell() {
   }, []);
 
   const activePairs = useMemo<TokenSpenderPair[]>(
-    () => allowances.map((a) => ({ token: a.token, spender: a.spender })),
+    () => allowances.map((a) => ({ token: a.token as Address, spender: a.spender as Address })),
     [allowances]
   );
 
@@ -157,7 +158,7 @@ export function HomeShell() {
           </div>
           <div className="space-y-2">
             <label className="text-sm text-slate-300">Chain</label>
-            <ChainSwitcher chainId={chainId} onChange={setChainId} />
+            <ChainSwitcher chainId={chainId} onChange={(id) => setChainId(id)} />
           </div>
           <div className="space-y-2">
             <label className="text-sm text-slate-300">Deep scan</label>

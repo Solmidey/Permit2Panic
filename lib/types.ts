@@ -1,7 +1,5 @@
-export interface TokenSpenderPair {
-  token: string;
-  spender: string;
-}
+import type { Address } from "viem";
+export interface TokenSpenderPair { token: Address; spender: Address; }
 
 export interface Allowance {
   id?: number;
