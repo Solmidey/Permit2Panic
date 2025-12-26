@@ -63,14 +63,17 @@ export function HomeShell() {
 
   const [revokedCount, setRevokedCount] = useState(0);
   const [limitedCount, setLimitedCount] = useState(0);
-  const [panickedCount] = useState(0); // keep if/when you wire a panic feature
+  const [panickedCount] = useState(0); // wire later if needed
+
+  // track “last successful scan” so users can save receipts even without actions
+  const [lastScanKey, setLastScanKey] = useState<string | null>(null);
+  const [lastScanAt, setLastScanAt] = useState<number | null>(null);
 
   // init: hygiene xp + last owner
   useEffect(() => {
     const xp = Number(localStorage.getItem(HYGIENE_XP_KEY) || "0");
     setHygieneXp(Number.isFinite(xp) ? xp : 0);
 
-    // If user previously scanned a manual address, restore it (toggle OFF).
     const saved =
       localStorage.getItem(LAST_OWNER_KEY) ||
       localStorage.getItem(LEGACY_LAST_OWNER_KEY) ||
@@ -105,7 +108,7 @@ export function HomeShell() {
       const target = overrideOwner ?? owner;
       if (!target) return;
 
-      // 1) show local receipts immediately (button always “works”)
+      // 1) show local receipts immediately
       const local = loadLocalReceipts(target, chainId);
       setReceipts(local);
 
@@ -123,7 +126,6 @@ export function HomeShell() {
 
         setReceipts(mergeReceipts(local, remote));
       } catch (err) {
-        // keep local; just log
         console.error(err);
       }
     },
@@ -157,7 +159,13 @@ export function HomeShell() {
         if (!res.ok) throw new Error(data?.error ?? "Scan failed");
         if (data.error) throw new Error(data.error);
 
-        setAllowances(Array.isArray(data.allowances) ? data.allowances : []);
+        const nextAllowances = Array.isArray(data.allowances) ? (data.allowances as Allowance[]) : [];
+        setAllowances(nextAllowances);
+
+        // mark last successful scan (lets Save Receipt work even with 0 actions)
+        setLastScanKey(`${target}:${chainId}`);
+        setLastScanAt(Date.now());
+
         toast.success("Scan complete");
 
         setHygieneXp((prev) => {
@@ -176,70 +184,87 @@ export function HomeShell() {
     [owner, chainId, deepScan, isConnected, fetchReceipts]
   );
 
+  const canSaveReceipt = useMemo(() => {
+    if (!owner) return false;
+
+    const actions = revokedCount + limitedCount + panickedCount;
+    if (actions > 0) return true;
+
+    // allow saving if a scan succeeded for current owner+chain
+    return lastScanKey === `${owner}:${chainId}` && lastScanAt !== null;
+  }, [owner, chainId, revokedCount, limitedCount, panickedCount, lastScanKey, lastScanAt]);
+
   const saveReceipt = useCallback(async () => {
     if (!owner) {
       toast.error("Connect or enter a wallet address first.");
       return;
     }
 
-    const totalActions = revokedCount + limitedCount + panickedCount;
-    if (totalActions === 0) {
-      toast.error("No actions yet. Revoke/limit something first.");
+    if (!canSaveReceipt) {
+      toast.error("Run a scan or take an action (revoke/limit) first.");
       return;
     }
 
     const createdAt = Date.now();
+    const id = makeId();
+
+    const actions = revokedCount + limitedCount + panickedCount;
+    const allowanceCount = allowances.length;
+
+    const summary =
+      actions > 0
+        ? `Actions: revoked ${revokedCount}, limited ${limitedCount}, panic batches ${panickedCount}. (Scan saw ${allowanceCount} allowances.)`
+        : `Scan receipt: ${allowanceCount} allowances found. No actions taken.`;
+
     const receipt: Receipt = {
       ...( {
-        id: makeId(),
+        id,
         owner,
         chainId,
         revoked: revokedCount,
         limited: limitedCount,
         panicked: panickedCount,
-        summary: `Revoked ${revokedCount} approvals, limited ${limitedCount}, panic batches ${panickedCount}.`,
+        summary,
         createdAt,
       } as any ),
     };
 
-    // ✅ Save locally first — always works
+    // ✅ always save locally first
     const nextLocal = prependLocalReceipt(owner, chainId, receipt);
     setReceipts(nextLocal);
     toast.success("Safety Receipt saved");
 
-    // Reset counters immediately (UX feels instant)
+    // reset counters for next session
     setRevokedCount(0);
     setLimitedCount(0);
 
-    // Best-effort sync to server (optional)
+    // Best-effort sync
     try {
       const res = await fetch("/api/receipts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          owner,
-          chainId,
-          revoked: (receipt as any).revoked ?? revokedCount,
-          limited: (receipt as any).limited ?? limitedCount,
-          panicked: (receipt as any).panicked ?? panickedCount,
-          summary: (receipt as any).summary,
-          createdAt,
-          id: (receipt as any).id,
-        }),
+        body: JSON.stringify(receipt),
       });
 
       const text = await res.text();
       const data = text ? JSON.parse(text) : {};
       if (!res.ok) throw new Error(data?.error ?? "Failed to sync receipt");
 
-      // re-merge so server + local stay consistent
       await fetchReceipts(owner);
     } catch (err) {
-      // Not fatal; receipt is already saved locally
       console.error(err);
-      toast.message("Saved locally. Server sync failed (you’re still good).");
+      toast.message("Saved locally. Server sync failed (still saved).");
     }
-  }, [owner, chainId, revokedCount, limitedCount, panickedCount, fetchReceipts]);
+  }, [
+    owner,
+    chainId,
+    allowances.length,
+    revokedCount,
+    limitedCount,
+    panickedCount,
+    canSaveReceipt,
+    fetchReceipts,
+  ]);
 
   const handleAllowanceAction = useCallback((type: "revoke" | "limit") => {
     if (type === "revoke") setRevokedCount((v) => v + 1);
@@ -264,9 +289,7 @@ export function HomeShell() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-4xl font-semibold text-white">Permit2 Panic Button</h1>
-          <p className="mt-2 text-slate-300">
-            Scan, flag, and revoke risky allowances on Ethereum &amp; Base. Keep your wallet hygiene streak alive.
-          </p>
+          <p className="mt-2 text-slate-300">Review spender and token before signing.</p>
         </div>
         <WalletConnect />
       </div>
@@ -314,8 +337,6 @@ export function HomeShell() {
 
             <div className="space-y-2">
               <label className="text-sm text-slate-300">Chain</label>
-
-              {/* ✅ mount-guard fixes Radix hydration mismatch */}
               {mounted ? (
                 <ChainSwitcher chainId={chainId} onChange={(id) => setChainId(id)} />
               ) : (
@@ -358,12 +379,7 @@ export function HomeShell() {
               Hygiene XP: {hygieneXp}
             </div>
 
-            <Button
-              variant="outline"
-              onClick={saveReceipt}
-              disabled={!owner || revokedCount + limitedCount + panickedCount === 0}
-              title={!owner ? "Enter a valid address first" : "Save a receipt for your actions"}
-            >
+            <Button variant="outline" onClick={saveReceipt} disabled={!canSaveReceipt}>
               Save receipt
             </Button>
           </div>
@@ -382,7 +398,7 @@ export function HomeShell() {
         {receipts.length ? (
           <div className="space-y-3">
             {receipts.map((r, idx) => (
-              <ReceiptCard key={(r as any).id ?? idx} receipt={r} />
+              <ReceiptCard key={(r as any).id ?? `${(r as any).createdAt ?? idx}`} receipt={r} />
             ))}
           </div>
         ) : (
