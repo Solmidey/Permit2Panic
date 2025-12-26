@@ -25,9 +25,23 @@ async function fetchLogs({ owner, chainId, deep, maxBlocks }: ScanOptions): Prom
   const latest = await client.getBlockNumber();
 
   // Use cursor if available (fast incremental scans)
+    // Use cursor if available (fast incremental scans)
   let cursor: number | null = null;
+
   try {
-    cursor = await getCursor(chainId, owner);
+    const cursorRes: unknown = await getCursor(chainId, owner);
+
+    if (typeof cursorRes === "number") {
+      cursor = cursorRes;
+    } else if (
+      cursorRes &&
+      typeof cursorRes === "object" &&
+      "lastScannedBlock" in cursorRes
+    ) {
+      cursor = Number((cursorRes as any).lastScannedBlock);
+    } else {
+      cursor = null;
+    }
   } catch {
     cursor = null;
   }

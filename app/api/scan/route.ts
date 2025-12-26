@@ -69,7 +69,7 @@ function client() {
 const toHexBlock = (b: bigint) => `0x${b.toString(16)}` as `0x${string}`;
 
 function topicToAddress(topic: `0x${string}`) {
-  return (`0x${topic.slice(26)}`) as `0x${string}`;
+  return `0x${topic.slice(26)}` as `0x${string}`;
 }
 
 async function safeTokenMeta(token: `0x${string}`) {
@@ -158,7 +158,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, allowances: [], error: "Invalid owner" }, { status: 400 });
     }
     if (chainId !== 8453) {
-      return NextResponse.json({ ok: false, allowances: [], error: "Only Base (8453) supported for now" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, allowances: [], error: "Only Base (8453) supported for now" },
+        { status: 400 }
+      );
     }
 
     const c = client();
@@ -196,10 +199,10 @@ export async function POST(req: Request) {
       ]);
 
       const amount = allowance[0] as bigint;
-      const expirationBig = allowance[1] as bigint;
-      const expiration = Number(expirationBig);
+      // ✅ FIX: viem returns uint48 as number here, not bigint
+      const expiration = Number(allowance[1]);
 
-      if (amount <= BigInt(0)) return null;
+      if (amount <= 0n) return null;
 
       return {
         token,
