@@ -1,5 +1,5 @@
 import { cookieStorage, createConfig, createStorage, http } from "wagmi";
-import { base, mainnet } from "viem/chains";
+import { base } from "viem/chains";
 import { coinbaseWallet, injected, walletConnect } from "wagmi/connectors";
 
 export function getConfig() {
@@ -11,7 +11,7 @@ export function getConfig() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
   return createConfig({
-    chains: [base, mainnet],
+    chains: [base],
     connectors: [
       // Covers MetaMask, Rabby, OKX, Trust, etc. via injected/EIP-1193
       injected({ shimDisconnect: true }),
@@ -38,7 +38,6 @@ export function getConfig() {
     ssr: true,
     transports: {
       [base.id]: http(process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org"),
-      [mainnet.id]: http(process.env.NEXT_PUBLIC_MAINNET_RPC_URL || "https://cloudflare-eth.com"),
     },
   });
 }

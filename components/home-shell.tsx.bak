@@ -1,6 +1,4 @@
 "use client";
-import { ScanProgressBar } from "./home-shell";
-
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getAddress, isAddress, type Address } from "viem";
@@ -27,7 +25,7 @@ const LAST_OWNER_KEY = "permit2panic:lastOwner";
 const LEGACY_LAST_OWNER_KEY = "last_owner";
 
 function normalizeAddress(value: string): Address | null {
-  const v = (value ?? "").trim(</>);
+  const v = (value ?? "").trim();
   if (!v) return null;
   if (!isAddress(v)) return null;
   return getAddress(v) as Address;
@@ -38,72 +36,72 @@ function shortAddr(addr: Address) {
 }
 
 function makeId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID(</>);
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 export function HomeShell() {
-  const { address: connectedAddress, isConnected } = useAccount(</>);
+  const { address: connectedAddress, isConnected } = useAccount();
 
-  const [mounted, setMounted] = useState(false</>);
-  useEffect(() => setMounted(true), []</>);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
-  const [chainId, setChainId] = useState<number>(DEFAULT_CHAIN_ID</>);
+  const [chainId, setChainId] = useState<number>(DEFAULT_CHAIN_ID);
 
   // owner input + toggle (default ON: use connected wallet)
-  const [ownerInput, setOwnerInput] = useState<string>(""</>);
-  const [useConnectedOwner, setUseConnectedOwner] = useState<boolean>(true</>);
+  const [ownerInput, setOwnerInput] = useState<string>("");
+  const [useConnectedOwner, setUseConnectedOwner] = useState<boolean>(true);
 
-  const owner = useMemo(() => normalizeAddress(ownerInput), [ownerInput]</>);
+  const owner = useMemo(() => normalizeAddress(ownerInput), [ownerInput]);
 
-  const [allowances, setAllowances] = useState<Allowance[]>([]</>);
-  const [loading, setLoading] = useState(false</>);
-  const [deepScan, setDeepScan] = useState(false</>);
+  const [allowances, setAllowances] = useState<Allowance[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [deepScan, setDeepScan] = useState(false);
 
-  const [receipts, setReceipts] = useState<Receipt[]>([]</>);
-  const [hygieneXp, setHygieneXp] = useState(0</>);
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [hygieneXp, setHygieneXp] = useState(0);
 
-  const [revokedCount, setRevokedCount] = useState(0</>);
-  const [limitedCount, setLimitedCount] = useState(0</>);
-  const [panickedCount] = useState(0</>); // wire later if needed
+  const [revokedCount, setRevokedCount] = useState(0);
+  const [limitedCount, setLimitedCount] = useState(0);
+  const [panickedCount] = useState(0); // wire later if needed
 
   // track “last successful scan” so users can save receipts even without actions
-  const [lastScanKey, setLastScanKey] = useState<string | null>(null</>);
-  const [lastScanAt, setLastScanAt] = useState<number | null>(null</>);
+  const [lastScanKey, setLastScanKey] = useState<string | null>(null);
+  const [lastScanAt, setLastScanAt] = useState<number | null>(null);
 
   // init: hygiene xp + last owner
   useEffect(() => {
-    const xp = Number(localStorage.getItem(HYGIENE_XP_KEY) || "0"</>);
-    setHygieneXp(Number.isFinite(xp) ? xp : 0</>);
+    const xp = Number(localStorage.getItem(HYGIENE_XP_KEY) || "0");
+    setHygieneXp(Number.isFinite(xp) ? xp : 0);
 
     const saved =
       localStorage.getItem(LAST_OWNER_KEY) ||
       localStorage.getItem(LEGACY_LAST_OWNER_KEY) ||
       "";
     if (saved && normalizeAddress(saved)) {
-      setOwnerInput(saved</>);
-      setUseConnectedOwner(false</>);
+      setOwnerInput(saved);
+      setUseConnectedOwner(false);
     }
-  }, []</>);
+  }, []);
 
   // keep owner synced to connected wallet when toggle is ON
   useEffect(() => {
     if (!isConnected || !connectedAddress) return;
     if (!useConnectedOwner) return;
 
-    setOwnerInput(connectedAddress</>);
-    localStorage.setItem(LAST_OWNER_KEY, connectedAddress</>);
-  }, [isConnected, connectedAddress, useConnectedOwner]</>);
+    setOwnerInput(connectedAddress);
+    localStorage.setItem(LAST_OWNER_KEY, connectedAddress);
+  }, [isConnected, connectedAddress, useConnectedOwner]);
 
   // persist whatever is currently in the input
   useEffect(() => {
-    if (ownerInput) localStorage.setItem(LAST_OWNER_KEY, ownerInput</>);
-  }, [ownerInput]</>);
+    if (ownerInput) localStorage.setItem(LAST_OWNER_KEY, ownerInput);
+  }, [ownerInput]);
 
   const activePairs = useMemo<TokenSpenderPair[]>(
     () => allowances.map((a) => ({ token: a.token as Address, spender: a.spender as Address })),
     [allowances]
-  </>);
+  );
 
   const fetchReceipts = useCallback(
     async (overrideOwner?: Address) => {
@@ -111,80 +109,80 @@ export function HomeShell() {
       if (!target) return;
 
       // 1) show local receipts immediately
-      const local = loadLocalReceipts(target, chainId</>);
-      setReceipts(local</>);
+      const local = loadLocalReceipts(target, chainId);
+      setReceipts(local);
 
       // 2) best-effort: fetch server receipts and merge
       try {
         const res = await fetch(`/api/receipts?owner=${target}&chainId=${chainId}`, {
           cache: "no-store",
-        }</>);
+        });
 
-        const text = await res.text(</>);
+        const text = await res.text();
         const data = text ? JSON.parse(text) : {};
 
-        if (!res.ok) throw new Error(data?.error ?? "Failed to load receipts"</>);
+        if (!res.ok) throw new Error(data?.error ?? "Failed to load receipts");
         const remote = Array.isArray(data.receipts) ? (data.receipts as Receipt[]) : [];
 
-        setReceipts(mergeReceipts(local, remote)</>);
+        setReceipts(mergeReceipts(local, remote));
       } catch (err) {
-        console.error(err</>);
+        console.error(err);
       }
     },
     [owner, chainId]
-  </>);
+  );
 
   useEffect(() => {
-    fetchReceipts(</>);
-  }, [fetchReceipts]</>);
+    fetchReceipts();
+  }, [fetchReceipts]);
 
   const scan = useCallback(
     async (overrideOwner?: Address) => {
       const target = overrideOwner ?? owner;
 
       if (!target) {
-        toast.error(isConnected ? "Connect a wallet or enter an address to scan." : "Enter an address to scan."</>);
+        toast.error(isConnected ? "Connect a wallet or enter an address to scan." : "Enter an address to scan.");
         return;
       }
 
-      setLoading(true</>);
+      setLoading(true);
       try {
         const res = await fetch("/api/scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ owner: target, chainId, deep: deepScan }),
-        }</>);
+        });
 
-        const text = await res.text(</>);
+        const text = await res.text();
         const data = text ? JSON.parse(text) : {};
 
-        if (!res.ok) throw new Error(data?.error ?? "Scan failed"</>);
-        if (data.error) throw new Error(data.error</>);
+        if (!res.ok) throw new Error(data?.error ?? "Scan failed");
+        if (data.error) throw new Error(data.error);
 
         const nextAllowances = Array.isArray(data.allowances) ? (data.allowances as Allowance[]) : [];
-        setAllowances(nextAllowances</>);
+        setAllowances(nextAllowances);
 
         // mark last successful scan (lets Save Receipt work even with 0 actions)
-        setLastScanKey(`${target}:${chainId}`</>);
-        setLastScanAt(Date.now()</>);
+        setLastScanKey(`${target}:${chainId}`);
+        setLastScanAt(Date.now());
 
-        toast.success("Scan complete"</>);
+        toast.success("Scan complete");
 
         setHygieneXp((prev) => {
           const next = prev + 1;
-          localStorage.setItem(HYGIENE_XP_KEY, String(next)</>);
+          localStorage.setItem(HYGIENE_XP_KEY, String(next));
           return next;
-        }</>);
+        });
 
-        await fetchReceipts(target</>);
+        await fetchReceipts(target);
       } catch (err: any) {
-        toast.error(err?.message ?? "Failed to scan"</>);
+        toast.error(err?.message ?? "Failed to scan");
       } finally {
-        setLoading(false</>);
+        setLoading(false);
       }
     },
     [owner, chainId, deepScan, isConnected, fetchReceipts]
-  </>);
+  );
 
   const canSaveReceipt = useMemo(() => {
     if (!owner) return false;
@@ -194,21 +192,21 @@ export function HomeShell() {
 
     // allow saving if a scan succeeded for current owner+chain
     return lastScanKey === `${owner}:${chainId}` && lastScanAt !== null;
-  }, [owner, chainId, revokedCount, limitedCount, panickedCount, lastScanKey, lastScanAt]</>);
+  }, [owner, chainId, revokedCount, limitedCount, panickedCount, lastScanKey, lastScanAt]);
 
   const saveReceipt = useCallback(async () => {
     if (!owner) {
-      toast.error("Connect or enter a wallet address first."</>);
+      toast.error("Connect or enter a wallet address first.");
       return;
     }
 
     if (!canSaveReceipt) {
-      toast.error("Run a scan or take an action (revoke/limit) first."</>);
+      toast.error("Run a scan or take an action (revoke/limit) first.");
       return;
     }
 
-    const createdAt = Date.now(</>);
-    const id = makeId(</>);
+    const createdAt = Date.now();
+    const id = makeId();
 
     const actions = revokedCount + limitedCount + panickedCount;
     const allowanceCount = allowances.length;
@@ -232,13 +230,13 @@ export function HomeShell() {
     };
 
     // ✅ always save locally first
-    const nextLocal = prependLocalReceipt(owner, chainId, receipt</>);
-    setReceipts(nextLocal</>);
-    toast.success("Safety Receipt saved"</>);
+    const nextLocal = prependLocalReceipt(owner, chainId, receipt);
+    setReceipts(nextLocal);
+    toast.success("Safety Receipt saved");
 
     // reset counters for next session
-    setRevokedCount(0</>);
-    setLimitedCount(0</>);
+    setRevokedCount(0);
+    setLimitedCount(0);
 
     // Best-effort sync
     try {
@@ -246,16 +244,16 @@ export function HomeShell() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(receipt),
-      }</>);
+      });
 
-      const text = await res.text(</>);
+      const text = await res.text();
       const data = text ? JSON.parse(text) : {};
-      if (!res.ok) throw new Error(data?.error ?? "Failed to sync receipt"</>);
+      if (!res.ok) throw new Error(data?.error ?? "Failed to sync receipt");
 
-      await fetchReceipts(owner</>);
+      await fetchReceipts(owner);
     } catch (err) {
-      console.error(err</>);
-      toast.message("Saved locally. Server sync failed (still saved)."</>);
+      console.error(err);
+      toast.message("Saved locally. Server sync failed (still saved).");
     }
   }, [
     owner,
@@ -266,27 +264,27 @@ export function HomeShell() {
     panickedCount,
     canSaveReceipt,
     fetchReceipts,
-  ]</>);
+  ]);
 
   const handleAllowanceAction = useCallback((type: "revoke" | "limit") => {
-    if (type === "revoke") setRevokedCount((v) => v + 1</>);
-    if (type === "limit") setLimitedCount((v) => v + 1</>);
-  }, []</>);
+    if (type === "revoke") setRevokedCount((v) => v + 1);
+    if (type === "limit") setLimitedCount((v) => v + 1);
+  }, []);
 
   const scanConnected = () => {
-    const addr = normalizeAddress(connectedAddress ?? ""</>);
+    const addr = normalizeAddress(connectedAddress ?? "");
     if (!addr) {
-      toast.error("Connect a wallet first."</>);
+      toast.error("Connect a wallet first.");
       return;
     }
-    setUseConnectedOwner(true</>);
-    setOwnerInput(addr</>);
-    scan(addr</>);
+    setUseConnectedOwner(true);
+    setOwnerInput(addr);
+    scan(addr);
   };
 
   const invalidOwner = ownerInput.trim().length > 0 && !owner;
 
-  return (<><>
+  return (
       <ScanProgressBar />
     <div className="mx-auto max-w-5xl px-4 py-10">
       <div className="flex items-start justify-between gap-4">
@@ -413,7 +411,7 @@ export function HomeShell() {
         )}
       </div>
     </div>
-  </>);
+  );
 }
 
 export default HomeShell;
@@ -421,30 +419,30 @@ export default HomeShell;
 import { useEffect, useState } from "react";
 
 export function ScanProgressBar() {
-  const [progress, setProgress] = useState(0</>);
-  const [active, setActive] = useState(false</>);
+  const [progress, setProgress] = useState(0);
+  const [active, setActive] = useState(false);
 
   useEffect(() => {
     if (!active) return;
 
     const i = setInterval(async () => {
-      const r = await fetch("/api/scan/progress"</>);
-      const j = await r.json(</>);
-      setProgress(j.progress</>);
-      if (j.progress >= 100) setActive(false</>);
-    }, 800</>);
+      const r = await fetch("/api/scan/progress");
+      const j = await r.json();
+      setProgress(j.progress);
+      if (j.progress >= 100) setActive(false);
+    }, 800);
 
-    return (<><>) => clearInterval(i</>);
+    return () => clearInterval(i);
       <ScanProgressBar />
-  }, [active]</>);
+  }, [active]);
 
-  return (<><>
+  return (
       <ScanProgressBar />
     <div className="w-full mt-4">
       <button
         onClick={() => {
-          setProgress(0</>);
-          setActive(true</>);
+          setProgress(0);
+          setActive(true);
         }}
         className="mb-2 text-sm underline"
       >
@@ -460,7 +458,7 @@ export function ScanProgressBar() {
         </div>
       )}
     </div>
-  </>);
+  );
 }
 <ScanProgressBar />
 <ScanProgressBar />

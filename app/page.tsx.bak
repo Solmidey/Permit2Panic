@@ -1,20 +1,20 @@
-import Image from "next/image";
 import PageClient from "./page-client";
+import { Logo } from "./page";
+
 
 export default function Page() {
-  return (
-    <main className="min-h-screen">
-      <Logo />
-      <PageClient />
-    </main>
-  );
+  return <PageClient />;
 }
 
-function Logo() {
+import Image from "next/image";
+
+export function Logo() {
   return (
+      <Logo />
     <div className="flex flex-col items-center mt-10">
       <Image src="/logo.svg" alt="Logo" width={96} height={96} />
       <p className="mt-3 text-sm text-gray-500">Scan Base. Stay clean.</p>
     </div>
   );
 }
+<Logo />
