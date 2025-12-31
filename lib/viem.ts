@@ -2,21 +2,25 @@ import { getRpcUrl } from "@/lib/chains";
 import { PERMIT2_ADDRESS } from "@/lib/permit2/constants";
 import { createPublicClient, formatUnits, http, parseUnits } from "viem";
 import { base } from "viem/chains";
-import type { Address } from "viem";
+import type { Address, PublicClient } from "viem";
 
+const baseClient = createPublicClient({
+  chain: base,
+  transport: http(
+    getRpcUrl(base.id) || base.rpcUrls.default.http[0],
+    {
+      fetchOptions: { cache: "no-store" },
+    }
+  ),
+});
+
+// 🚨 DO NOT type this as Record<number, PublicClient>
 export const clients = {
-      fetchOptions: { cache: "no-store" },
-    }),
-  }),
-  [base.id]: createPublicClient({
-    chain: base,
-    transport: http(getRpcUrl(base.id) || base.rpcUrls.default.http[0], {
-      fetchOptions: { cache: "no-store" },
-    }),
-  }),
-};
+  [base.id]: baseClient,
+} as const;
 
-export function getClient(chainId: number) {
+export function getClient(chainId: number): PublicClient {
+  return (clients as Record<number, PublicClient>)[chainId] ?? baseClient;
 }
 
 export function formatAllowanceAmount(amount: bigint, decimals: number) {
